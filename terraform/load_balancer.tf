@@ -38,7 +38,7 @@ resource "azurerm_application_gateway" "drupal_agw" {
   }
 
   frontend_port {
-    name = local.frontend_port_name
+    name = local.frontend_port_
     port = 80
   }
 
