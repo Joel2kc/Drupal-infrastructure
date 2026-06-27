@@ -39,7 +39,7 @@
 #
 #   tags = {
 #     role        = "drupal-vmss"
-#     environment = "production"
+#     environment = 
 #   }
 # }
 #
