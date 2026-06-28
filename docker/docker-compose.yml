@@ -1,0 +1,101 @@
+services:
+  drupal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: drupal_app
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    environment:
+      DB_HOST: mysql
+      DB_NAME: drupal
+      DB_USER: drupaluser
+      DB_PASSWORD: drupalpass
+      DRUPAL_ADMIN_USER: admin
+      DRUPAL_ADMIN_PASS: admin123
+    volumes:
+      - drupal_files:/var/www/html/drupal/web/sites/default/files
+      - drupal_modules:/var/www/html/drupal/web/modules/custom
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - drupal_network
+
+  mysql:
+    image: mysql:8.0
+    container_name: drupal_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: drupal
+      MYSQL_USER: drupaluser
+      MYSQL_PASSWORD: drupalpass
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 10s
+      retries: 10
+      interval: 10s
+    networks:
+      - drupal_network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - drupal_network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: grafanaadmin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    networks:
+      - drupal_network
+
+  nginx_lb:
+    image: nginx:alpine
+    container_name: nginx_loadbalancer
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - drupal
+    networks:
+      - drupal_network
+
+volumes:
+  drupal_files:
+  drupal_modules:
+  mysql_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  drupal_network:
+    driver: bridge

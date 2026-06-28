@@ -1,7 +1,7 @@
 variable "location_primary" {
   description = "Primary Azure region"
   type        = string
-  default     = "France Central"
+  default     = "canadacentral"
 }
 
 variable "location_secondary" {
@@ -19,7 +19,7 @@ variable "resource_group_name" {
 variable "vm_size" {
   description = "Azure VM size for Drupal app servers"
   type        = string
-  default     = "Standard_GS1"
+  default     = "Standard_B2ps_v2"
 }
 
 variable "admin_username" {

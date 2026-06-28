@@ -1,0 +1,311 @@
+name: Drupal HA CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  DOCKER_IMAGE: joel2kc/drupal-ha
+
+jobs:
+  code-quality:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Terraform configuration
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: Terraform Format Check
+        run: |
+          cd terraform
+          terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Validate Ansible Playbooks syntax
+        run: |
+          pip install ansible
+          cd ansible
+          ansible-playbook playbooks/site.yml \
+            -i inventory/hosts.ini \
+            --syntax-check \
+            -e "db_host=localhost db_name=drupal db_user=drupaldbadmin db_password=test drupal_admin_password=test drupal_hash_salt=test app_gateway_ip=localhost vault_db_password=test vault_drupal_admin_password=test vault_drupal_hash_salt=test"
+        continue-on-error: true
+
+  build:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: code-quality
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker
+          file: ./docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image build summary
+        run: |
+          echo "## Docker Image Built and Pushed" >> $GITHUB_STEP_SUMMARY
+          echo "Image: ${{ env.DOCKER_IMAGE }}" >> $GITHUB_STEP_SUMMARY
+          echo "Tags: ${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Remove version field from compose file
+        run: sed -i '/^version:/d' docker/docker-compose.yml
+
+      - name: Start test environment
+        run: |
+          cd docker
+          docker compose up -d mysql prometheus grafana
+          echo "Waiting for MySQL to be ready..."
+          sleep 30
+
+      - name: Check MySQL is healthy
+        run: |
+          cd docker
+          docker compose ps mysql | grep healthy
+
+      - name: Check Prometheus is running
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9090/-/healthy)
+          echo "Prometheus health status: $response"
+          if [ "$response" != "200" ]; then
+            echo "Prometheus is not healthy"
+            exit 1
+          fi
+
+      - name: Check Grafana is running
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/health)
+          echo "Grafana health status: $response"
+          if [ "$response" != "200" ]; then
+            echo "Grafana is not healthy"
+            exit 1
+          fi
+
+      - name: Validate Docker image exists on Hub
+        run: |
+          docker pull ${{ env.DOCKER_IMAGE }}:latest
+          echo "Image pulled successfully from Docker Hub"
+
+      - name: Cleanup test environment
+        if: always()
+        run: |
+          cd docker
+          docker compose down -v
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging'
+    environment: staging
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/drupal_key
+          chmod 600 ~/.ssh/drupal_key
+          ssh-keyscan -H ${{ secrets.VM_IP_1 }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -H ${{ secrets.VM_IP_2 }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible
+          ansible --version
+
+      - name: Create Ansible vault password file
+        run: |
+          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > /tmp/vault_password
+          chmod 600 /tmp/vault_password
+
+      - name: Create vault file for pipeline
+        run: |
+          mkdir -p ansible/vars
+          cat > /tmp/vault_plain.yml << EOF
+          vault_db_password: "${{ secrets.DB_PASSWORD }}"
+          vault_drupal_admin_password: "${{ secrets.DRUPAL_ADMIN_PASSWORD }}"
+          vault_drupal_hash_salt: "pipeline_hash_salt_$(echo ${{ github.sha }} | cut -c1-32)"
+          EOF
+          ansible-vault encrypt /tmp/vault_plain.yml \
+            --vault-password-file /tmp/vault_password \
+            --output ansible/vars/vault.yml
+
+      - name: Create static inventory
+        run: |
+          cat > ansible/inventory/hosts.ini << EOF
+          [drupal_app]
+          drupal-vm1 ansible_host=${{ secrets.VM_IP_1 }} ansible_user=drupaladmin ansible_ssh_private_key_file=~/.ssh/drupal_key
+          drupal-vm2 ansible_host=${{ secrets.VM_IP_2 }} ansible_user=drupaladmin ansible_ssh_private_key_file=~/.ssh/drupal_key
+          EOF
+
+      - name: Run Ansible playbook on staging
+        run: |
+          cd ansible
+          ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook playbooks/site.yml \
+            -i inventory/hosts.ini \
+            --vault-password-file /tmp/vault_password \
+            -e "db_host=${{ secrets.MYSQL_HOST }}" \
+            -e "db_name=drupal" \
+            -e "db_user=drupaldbadmin" \
+            -e "db_password=${{ secrets.DB_PASSWORD }}" \
+            -e "drupal_admin_password=${{ secrets.DRUPAL_ADMIN_PASSWORD }}" \
+            -e "app_gateway_ip=${{ secrets.AGW_PUBLIC_IP }}"
+
+      - name: Run smoke tests on staging
+        run: |
+          echo "Running smoke tests..."
+          AGW_IP=${{ secrets.AGW_PUBLIC_IP }}
+
+          for i in {1..10}; do
+            response=$(curl -s -o /dev/null -w "%{http_code}" \
+              http://$AGW_IP/ --max-time 30 || echo "000")
+            echo "Attempt $i: HTTP $response"
+            if [ "$response" = "200" ] || [ "$response" = "302" ]; then
+              echo "Smoke test passed"
+              exit 0
+            fi
+            sleep 15
+          done
+
+          echo "Smoke tests failed after 10 attempts"
+          exit 1
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/drupal_key
+          chmod 600 ~/.ssh/drupal_key
+          ssh-keyscan -H ${{ secrets.VM_IP_1 }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -H ${{ secrets.VM_IP_2 }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible
+
+      - name: Create vault password file
+        run: |
+          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > /tmp/vault_password
+          chmod 600 /tmp/vault_password
+
+      - name: Create vault file for pipeline
+        run: |
+          mkdir -p ansible/vars
+          cat > /tmp/vault_plain.yml << EOF
+          vault_db_password: "${{ secrets.DB_PASSWORD }}"
+          vault_drupal_admin_password: "${{ secrets.DRUPAL_ADMIN_PASSWORD }}"
+          vault_drupal_hash_salt: "production_hash_salt_$(echo ${{ github.sha }} | cut -c1-32)"
+          EOF
+          ansible-vault encrypt /tmp/vault_plain.yml \
+            --vault-password-file /tmp/vault_password \
+            --output ansible/vars/vault.yml
+
+      - name: Create production inventory
+        run: |
+          cat > ansible/inventory/hosts.ini << EOF
+          [drupal_app]
+          drupal-vm1 ansible_host=${{ secrets.VM_IP_1 }} ansible_user=drupaladmin ansible_ssh_private_key_file=~/.ssh/drupal_key
+          drupal-vm2 ansible_host=${{ secrets.VM_IP_2 }} ansible_user=drupaladmin ansible_ssh_private_key_file=~/.ssh/drupal_key
+          EOF
+
+      - name: Deploy to production
+        run: |
+          cd ansible
+          ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook playbooks/site.yml \
+            -i inventory/hosts.ini \
+            --vault-password-file /tmp/vault_password \
+            -e "db_host=${{ secrets.MYSQL_HOST }}" \
+            -e "db_name=drupal" \
+            -e "db_user=drupaldbadmin" \
+            -e "db_password=${{ secrets.DB_PASSWORD }}" \
+            -e "drupal_admin_password=${{ secrets.DRUPAL_ADMIN_PASSWORD }}" \
+            -e "app_gateway_ip=${{ secrets.AGW_PUBLIC_IP }}"
+
+      - name: Verify production deployment
+        run: |
+          AGW_IP=${{ secrets.AGW_PUBLIC_IP }}
+          for i in {1..5}; do
+            response=$(curl -s -o /dev/null -w "%{http_code}" \
+              http://$AGW_IP/ --max-time 30 || echo "000")
+            echo "Check $i: HTTP $response"
+            if [ "$response" = "200" ] || [ "$response" = "302" ]; then
+              echo "Production deployment verified"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "Production verification failed"
+          exit 1
+
+      - name: Production deployment summary
+        if: success()
+        run: |
+          echo "## Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "Deployed by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "Application Gateway: http://${{ secrets.AGW_PUBLIC_IP }}" >> $GITHUB_STEP_SUMMARY

@@ -8,7 +8,7 @@ terraform {
   }
   backend "azurerm" {
     resource_group_name  = "drupal-tfstate-rg"
-    storage_account_name = "drupaltfstate2kc"
+    storage_account_name = "drupaltfstate2kc2"
     container_name       = "tfstate"
     key                  = "drupal.terraform.tfstate"
   }
