@@ -1,0 +1,102 @@
+---
+- name: Install acl package for privilege escalation support
+  apt:
+    name: acl
+    state: present
+
+- name: Install unzip and git
+  apt:
+    name:
+      - unzip
+      - git
+    state: present
+
+- name: Create web directory
+  file:
+    path: /var/www/html
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+
+- name: Check if Drupal is already downloaded
+  stat:
+    path: /var/www/html/drupal/web/index.php
+  register: drupal_exists
+
+- name: Download Drupal using Composer
+  shell: |
+    composer create-project drupal/recommended-project:^10 /var/www/html/drupal --no-interaction
+  environment:
+    COMPOSER_ALLOW_SUPERUSER: "1"
+  when: not drupal_exists.stat.exists
+
+- name: Set correct ownership on Drupal files
+  file:
+    path: /var/www/html/drupal
+    owner: www-data
+    group: www-data
+    recurse: yes
+
+- name: Set correct permissions on Drupal directories
+  shell: find /var/www/html/drupal -type d -exec chmod 755 {} \;
+
+- name: Set correct permissions on Drupal files
+  shell: find /var/www/html/drupal -type f -exec chmod 644 {} \;
+
+- name: Make all vendor binaries executable
+  shell: |
+    find /var/www/html/drupal/vendor -name "drush" -type f -exec chmod 755 {} \;
+    find /var/www/html/drupal/vendor/bin -type l -exec chmod 755 {} \;
+    chmod -R 755 /var/www/html/drupal/vendor/drush
+
+- name: Create Drupal files directory
+  file:
+    path: /var/www/html/drupal/web/sites/default/files
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0775'
+
+- name: Copy default settings file
+  copy:
+    src: /var/www/html/drupal/web/sites/default/default.settings.php
+    dest: /var/www/html/drupal/web/sites/default/settings.php
+    remote_src: yes
+    owner: www-data
+    group: www-data
+    mode: '0644'
+  when: not drupal_exists.stat.exists
+
+- name: Configure Drupal database connection
+  template:
+    src: drupal-settings.php.j2
+    dest: /var/www/html/drupal/web/sites/default/settings.php
+    owner: www-data
+    group: www-data
+    mode: '0644'
+
+- name: Install Drush
+  shell: |
+    composer require drush/drush --working-dir=/var/www/html/drupal --no-interaction
+  environment:
+    COMPOSER_ALLOW_SUPERUSER: "1"
+
+- name: Run Drupal site install
+  shell: |
+    cd /var/www/html/drupal && \
+    php vendor/bin/drush site:install standard \
+      --db-url="mysql://{{ db_user }}:{{ db_password }}@{{ db_host }}/{{ db_name }}" \
+      --site-name="Drupal HA Site" \
+      --account-name="admin" \
+      --account-pass="{{ drupal_admin_password }}" \
+      -y
+  args:
+    chdir: /var/www/html/drupal
+
+- name: Fix ownership after install
+  file:
+    path: /var/www/html/drupal
+    owner: www-data
+    group: www-data
+    recurse: yes

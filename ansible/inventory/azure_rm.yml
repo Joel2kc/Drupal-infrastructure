@@ -1,0 +1,11 @@
+plugin: azure.azcollection.azure_rm
+auth_source: auto
+include_vm_resource_groups:
+  - drupal-production-rg
+keyed_groups:
+  - prefix: tag
+    key: tags
+filters:
+  - tags.role == 'drupal-app'
+hostvar_expressions:
+  ansible_host: public_ipv4_addresses[0]

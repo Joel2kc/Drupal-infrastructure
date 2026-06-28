@@ -1,0 +1,24 @@
+---
+- name: Configure Drupal Application Servers
+  hosts: all
+  gather_facts: yes
+
+  vars_files:
+    - ../vars/vault.yml
+
+  vars:
+    db_host: "10.0.1.4"
+    db_name: drupal
+    db_user: drupaldbadmin
+    db_password: "{{ vault_db_password }}"
+    drupal_admin_password: "{{ vault_drupal_admin_password }}"
+    drupal_hash_salt: "{{ vault_drupal_hash_salt }}"
+    app_gateway_ip: "52.139.36.23"
+
+  roles:
+    - role: apache
+    - role: php
+    - role: mysql
+    - role: drupal
+    - role: filesync
+    - role: monitoring

@@ -1,0 +1,39 @@
+---
+- name: Update apt cache
+  apt:
+    update_cache: yes
+
+- name: Install PHP 8.3 and required extensions
+  apt:
+    name:
+      - php8.3
+      - php8.3-cli
+      - php8.3-common
+      - php8.3-mysql
+      - php8.3-zip
+      - php8.3-gd
+      - php8.3-mbstring
+      - php8.3-curl
+      - php8.3-xml
+      - php8.3-bcmath
+      - php8.3-opcache
+      - libapache2-mod-php8.3
+    state: present
+    update_cache: yes
+
+- name: Configure PHP settings for Drupal
+  template:
+    src: drupal-php.ini.j2
+    dest: /etc/php/8.3/apache2/conf.d/99-drupal.ini
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart Apache
+
+- name: Install Composer
+  shell: |
+    curl -sS https://getcomposer.org/installer | php
+    mv composer.phar /usr/local/bin/composer
+    chmod +x /usr/local/bin/composer
+  args:
+    creates: /usr/local/bin/composer

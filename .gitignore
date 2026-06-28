@@ -1,3 +1,13 @@
-terraform/terraform.tfvars
 terraform/.terraform/
 terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/terraform.tfvars
+terraform/tfplan
+ansible/vars/vault.yml
+ansible/inventory/hosts.ini
+.env
+.env.*
+*.pem
+*.key
+__pycache__/
+.DS_Store

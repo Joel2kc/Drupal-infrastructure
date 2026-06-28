@@ -1,0 +1,25 @@
+---
+- name: Install rsync
+  apt:
+    name: rsync
+    state: present
+
+- name: Create shared files directory
+  file:
+    path: /var/www/html/drupal/web/sites/default/files
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0775'
+
+- name: Set up rsync cron job for file synchronization
+  cron:
+    name: "Sync Drupal files between app servers"
+    minute: "*/5"
+    job: >
+      rsync -avz --delete
+      -e "ssh -i /home/drupaladmin/.ssh/drupal_key -o StrictHostKeyChecking=no"
+      /var/www/html/drupal/web/sites/default/files/
+      drupaladmin@{{ hostvars[groups['drupal_app'][1]]['ansible_host'] }}:/var/www/html/drupal/web/sites/default/files/
+    user: www-data
+  when: inventory_hostname == groups['drupal_app'][0]
