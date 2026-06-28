@@ -13,8 +13,13 @@ $databases['default']['default'] = [
 ];
 
 $settings['trusted_host_patterns'] = [
-  '^{{ app_gateway_ip }}$',
-  '^drupal\.yourdomain\.com$',
+  '^{{ app_gateway_ip | replace(".", "\\.") }}$',
+  '^20\\.48\\.249\\.102$',
+  '^20\\.63\\.34\\.255$',
+  '^10\\.0\\.1\\.4$',
+  '^10\\.0\\.2\\.4$',
+  '^127\\.0\\.0\\.1$',
+  '^localhost$',
 ];
 
 $settings['hash_salt'] = '{{ drupal_hash_salt }}';

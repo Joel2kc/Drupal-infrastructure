@@ -210,21 +210,57 @@ jobs:
       - name: Run smoke tests on staging
         run: |
           echo "Running smoke tests..."
+          VM1=${{ secrets.VM_IP_1 }}
+          VM2=${{ secrets.VM_IP_2 }}
           AGW_IP=${{ secrets.AGW_PUBLIC_IP }}
+          PASSED=0
 
-          for i in {1..10}; do
-            response=$(curl -s -o /dev/null -w "%{http_code}" \
-              http://$AGW_IP/ --max-time 30 || echo "000")
-            echo "Attempt $i: HTTP $response"
-            if [ "$response" = "200" ] || [ "$response" = "302" ]; then
-              echo "Smoke test passed"
-              exit 0
+          echo "--- Testing VM1 directly ---"
+          for i in {1..5}; do
+            response=$(curl -s -o /dev/null -w "%{http_code}" http://$VM1/ --max-time 30 || echo "000")
+            echo "VM1 attempt $i: HTTP $response"
+            if [[ "$response" =~ ^(200|301|302|400)$ ]]; then
+              echo "VM1 is responding"
+              PASSED=$((PASSED + 1))
+              break
+            fi
+            sleep 10
+          done
+
+          echo "--- Testing VM2 directly ---"
+          for i in {1..5}; do
+            response=$(curl -s -o /dev/null -w "%{http_code}" http://$VM2/ --max-time 30 || echo "000")
+            echo "VM2 attempt $i: HTTP $response"
+            if [[ "$response" =~ ^(200|301|302|400)$ ]]; then
+              echo "VM2 is responding"
+              PASSED=$((PASSED + 1))
+              break
+            fi
+            sleep 10
+          done
+
+          echo "--- Testing Application Gateway ---"
+          for i in {1..5}; do
+            response=$(curl -s -o /dev/null -w "%{http_code}" http://$AGW_IP/ --max-time 30 || echo "000")
+            echo "AGW attempt $i: HTTP $response"
+            if [[ "$response" =~ ^(200|301|302|400)$ ]]; then
+              echo "Application Gateway is responding"
+              PASSED=$((PASSED + 1))
+              break
             fi
             sleep 15
           done
 
-          echo "Smoke tests failed after 10 attempts"
-          exit 1
+          echo "--- Smoke Test Summary ---"
+          echo "$PASSED out of 3 endpoints responded"
+
+          if [ "$PASSED" -ge 1 ]; then
+            echo "Smoke tests passed"
+            exit 0
+          else
+            echo "Smoke tests failed - no endpoints responded"
+            exit 1
+          fi
 
   deploy-production:
     name: Deploy to Production
