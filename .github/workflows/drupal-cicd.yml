@@ -193,6 +193,8 @@ jobs:
           EOF
 
       - name: Run Ansible playbook on staging
+        env:
+          ANSIBLE_ROLES_PATH: ${{ github.workspace }}/ansible/roles
         run: |
           cd ansible
           ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook playbooks/site.yml \
