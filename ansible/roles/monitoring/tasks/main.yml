@@ -7,7 +7,7 @@
 
 - name: Download Node Exporter
   get_url:
-    url: "https://github.com/prometheus/node_exporter/releases/download/v1.7.0/node_exporter-1.7.0.linux-amd64.tar.gz"
+    url: "https://github.com/prometheus/node_exporter/releases/download/v1.7.0/node_exporter-1.7.0.linux-arm64.tar.gz"
     dest: /tmp/node_exporter.tar.gz
 
 - name: Extract Node Exporter
