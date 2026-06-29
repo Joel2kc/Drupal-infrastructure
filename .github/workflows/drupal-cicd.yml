@@ -217,9 +217,10 @@ jobs:
 
           echo "--- Testing VM1 directly ---"
           for i in {1..5}; do
-            response=$(curl -s -o /dev/null -w "%{http_code}" http://$VM1/ --max-time 30 || echo "000")
+            response=$(curl -s -o /dev/null -w "%{http_code}" \
+              http://$VM1/user/login --max-time 30 || echo "000")
             echo "VM1 attempt $i: HTTP $response"
-            if [[ "$response" =~ ^(200|301|302|400)$ ]]; then
+            if [[ "$response" =~ ^(200|301|302)$ ]]; then
               echo "VM1 is responding"
               PASSED=$((PASSED + 1))
               break
@@ -229,9 +230,10 @@ jobs:
 
           echo "--- Testing VM2 directly ---"
           for i in {1..5}; do
-            response=$(curl -s -o /dev/null -w "%{http_code}" http://$VM2/ --max-time 30 || echo "000")
+            response=$(curl -s -o /dev/null -w "%{http_code}" \
+              http://$VM2/user/login --max-time 30 || echo "000")
             echo "VM2 attempt $i: HTTP $response"
-            if [[ "$response" =~ ^(200|301|302|400)$ ]]; then
+            if [[ "$response" =~ ^(200|301|302)$ ]]; then
               echo "VM2 is responding"
               PASSED=$((PASSED + 1))
               break
@@ -241,9 +243,10 @@ jobs:
 
           echo "--- Testing Application Gateway ---"
           for i in {1..5}; do
-            response=$(curl -s -o /dev/null -w "%{http_code}" http://$AGW_IP/ --max-time 30 || echo "000")
+            response=$(curl -s -o /dev/null -w "%{http_code}" \
+              http://$AGW_IP/user/login --max-time 30 || echo "000")
             echo "AGW attempt $i: HTTP $response"
-            if [[ "$response" =~ ^(200|301|302|400)$ ]]; then
+            if [[ "$response" =~ ^(200|301|302)$ ]]; then
               echo "Application Gateway is responding"
               PASSED=$((PASSED + 1))
               break
@@ -312,6 +315,8 @@ jobs:
           EOF
 
       - name: Deploy to production
+        env:
+          ANSIBLE_ROLES_PATH: ${{ github.workspace }}/ansible/roles
         run: |
           cd ansible
           ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook playbooks/site.yml \
@@ -329,9 +334,9 @@ jobs:
           AGW_IP=${{ secrets.AGW_PUBLIC_IP }}
           for i in {1..5}; do
             response=$(curl -s -o /dev/null -w "%{http_code}" \
-              http://$AGW_IP/ --max-time 30 || echo "000")
+              http://$AGW_IP/user/login --max-time 30 || echo "000")
             echo "Check $i: HTTP $response"
-            if [ "$response" = "200" ] || [ "$response" = "302" ]; then
+            if [[ "$response" =~ ^(200|301|302)$ ]]; then
               echo "Production deployment verified"
               exit 0
             fi
