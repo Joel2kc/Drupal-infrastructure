@@ -7,8 +7,10 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  - job_name: 'drupal-nodes'
+  - job_name: 'drupal-local'
     static_configs:
-      - targets:
-          - '20.48.249.102:9100'
-          - '20.63.34.255:9100'
+      - targets: ['drupal_app:80']
+
+  - job_name: 'mysql-local'
+    static_configs:
+      - targets: ['drupal_mysql:3306']

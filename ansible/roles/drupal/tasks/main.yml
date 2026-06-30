@@ -100,3 +100,18 @@
     owner: www-data
     group: www-data
     recurse: yes
+
+- name: Clear Drupal cache after installation
+  shell: |
+    sudo docker exec drupal-mysql mysql -udrupaldbadmin -p{{ db_password }} drupal -e "
+    TRUNCATE cache_bootstrap;
+    TRUNCATE cache_config;
+    TRUNCATE cache_container;
+    TRUNCATE cache_data;
+    TRUNCATE cache_default;
+    TRUNCATE cache_discovery;
+    TRUNCATE cache_dynamic_page_cache;
+    TRUNCATE cache_menu;
+    TRUNCATE cache_page;
+    " 2>/dev/null || true
+  when: inventory_hostname == groups['drupal_app'][0]
