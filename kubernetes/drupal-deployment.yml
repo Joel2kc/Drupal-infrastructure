@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drupal
+  namespace: drupal-production
+  labels:
+    app: drupal
+    component: application
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: drupal
+      component: application
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: drupal
+        component: application
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: component
+                    operator: In
+                    values:
+                      - application
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: drupal
+          image: joel2kc/drupal-ha:latest
+          ports:
+            - containerPort: 80
+          env:
+            - name: DB_HOST
+              value: "mysql-service"
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: mysql-database
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: mysql-user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: mysql-password
+            - name: DRUPAL_ADMIN_USER
+              value: "admin"
+            - name: DRUPAL_ADMIN_PASS
+              value: "DrupalAdmin2kc!"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          volumeMounts:
+            - name: drupal-files
+              mountPath: /var/www/html/drupal/web/sites/default/files
+      volumes:
+        - name: drupal-files
+          persistentVolumeClaim:
+            claimName: drupal-files-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: drupal-service
+  namespace: drupal-production
+spec:
+  selector:
+    app: drupal
+    component: application
+  ports:
+    - port: 80
+      targetPort: 80
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: drupal-files-pvc
+  namespace: drupal-production
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi

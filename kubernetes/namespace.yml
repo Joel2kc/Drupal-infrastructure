@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: drupal-production
+  labels:
+    app: drupal
+    environment: production
